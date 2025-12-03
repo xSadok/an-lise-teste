@@ -84,6 +84,10 @@
             color: white;
             border-color: #3b82f6; /* blue-500 */
         }
+        .filter-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         .metric-btn {
             padding: 0.25rem 0.75rem;
             font-size: 0.8rem;
@@ -1028,28 +1032,71 @@ if (filterRecursosSamu) {
                 return;
             }
 
-            const getCompositeKey = (row) => {
-                const ocorrencia = String(row[keyNames.ocorrencia] || '').trim();
-                const paciente = String(row[keyNames.paciente] || '').trim().toUpperCase();
-                const recurso = String(row[keyNames.recurso] || '').trim().toUpperCase();
-                if (!ocorrencia || !paciente || !recurso) return null;
-                return `${ocorrencia}|${paciente}|${recurso}`;
-            };
-            
-            const dataMap = new Map();
+            // Group by NumOcorrencia to create hierarchical structure
+            const ocorrenciaMap = new Map();
             allRawData.forEach(row => {
-                const key = getCompositeKey(row);
-                if (key) {
-                    if (dataMap.has(key)) {
-                        const existingRow = dataMap.get(key);
-                        dataMap.set(key, { ...existingRow, ...row });
-                    } else {
-                        dataMap.set(key, row);
-                    }
+                const oc = String(row[keyNames.ocorrencia] || '').trim();
+                if (!oc) return;
+                
+                if (!ocorrenciaMap.has(oc)) {
+                    ocorrenciaMap.set(oc, []);
                 }
+                ocorrenciaMap.get(oc).push(row);
             });
 
-            mergedData = Array.from(dataMap.values());
+            // Build hierarchical mergedData with _pacientes array
+            mergedData = Array.from(ocorrenciaMap.entries()).map(([ocorrencia, rowsForOcorrencia]) => {
+                const firstRow = rowsForOcorrencia[0];
+                
+                // Extract fixed fields from first row (same for all patients of this occurrence)
+                const occurrenceData = {
+                    [keyNames.ocorrencia]: ocorrencia,
+                    [keyNames.hora || 'HoraIni_TARM_Hora']: firstRow[keyNames.hora || 'HoraIni_TARM_Hora'],
+                    [keyNames.mes || 'DataIni_TARM_Mes']: firstRow[keyNames.mes || 'DataIni_TARM_Mes'],
+                    [keyNames.incidente || 'Incidente']: firstRow[keyNames.incidente || 'Incidente'],
+                    [keyNames.municipio || 'Município']: firstRow[keyNames.municipio || 'Município'],
+                    _pacientes: []
+                };
+
+                // Group rows by unique paciente+recurso combination
+                const pacienteMap = new Map();
+                rowsForOcorrencia.forEach(row => {
+                    const paciente = String(row[keyNames.paciente] || '').trim().toUpperCase();
+                    const recurso = String(row[keyNames.recurso] || '').trim().toUpperCase();
+                    const key = `${paciente}|${recurso}`;
+                    
+                    if (!pacienteMap.has(key)) {
+                        pacienteMap.set(key, row);
+                    } else {
+                        // Merge if duplicates exist
+                        const existing = pacienteMap.get(key);
+                        pacienteMap.set(key, { ...existing, ...row });
+                    }
+                });
+
+                // Add patients to _pacientes array
+                occurrenceData._pacientes = Array.from(pacienteMap.values());
+
+                // Copy all other fields from first row as fallback
+                Object.keys(firstRow).forEach(key => {
+                    if (!occurrenceData.hasOwnProperty(key)) {
+                        occurrenceData[key] = firstRow[key];
+                    }
+                });
+
+                return occurrenceData;
+            });
+
+            // For backward compatibility, also create a flat version for exports
+            const flatMergedData = [];
+            mergedData.forEach(occData => {
+                occData._pacientes.forEach(pacData => {
+                    flatMergedData.push({ ...occData, ...pacData });
+                });
+            });
+            
+            // Store flat version separately for exports
+            window._flatMergedData = flatMergedData;
             
             // Pré-processamento para filtro de "sem envio de recurso"
             const occurrenceCounts = new Map();
@@ -1073,22 +1120,73 @@ if (filterRecursosSamu) {
             aereoOverrideBtn.disabled = false;
             reportTitleInput.value = new Date().getFullYear();
 
-            processedData = mergedData.map(row => {
-                let newRow = { ...row };
+            processedData = mergedData.map(occurrenceRow => {
+                let newRow = { ...occurrenceRow };
                 
                 newRow._ano = getYearFromOcorrencia(newRow[keyNames.ocorrencia]);
                 
+                // Process each patient in the occurrence
+                if (newRow._pacientes && Array.isArray(newRow._pacientes)) {
+                    newRow._pacientes = newRow._pacientes.map(pacData => {
+                        let pacRow = { ...pacData };
+                        
+                        const prefixKey = findKey(pacRow, 'Prefixo');
+                        if (prefixKey && typeof pacRow[prefixKey] === 'string' && pacRow[prefixKey].toUpperCase().startsWith('PENDENTE')) {
+                            pacRow[prefixKey] = 'PENDENTE';
+                        }
+                        const reservaPrefixos = ["USB RESERVA", "USB EXTRA 1", "USB EXTRA 2", "USB EXTRA"];
+                        if (prefixKey && typeof pacRow[prefixKey] === 'string' && reservaPrefixos.includes(pacRow[prefixKey].toUpperCase())) {
+                            pacRow[prefixKey] = 'USB RESERVA';
+                        }
+                        
+                        const estabKey = findKey(pacRow, 'Estabelecimento');
+                        if (estabKey && typeof pacRow[estabKey] === 'string' && pacRow[estabKey].toUpperCase().startsWith('PRIVADO')) {
+                            pacRow[estabKey] = 'PRIVADO';
+                        }
+                        
+                        const vitimasKey = findKey(pacRow, 'Vítimas') || 'Vítimas';
+                        pacRow[vitimasKey] = parseInt(pacRow[vitimasKey], 10);
+                        if (isNaN(pacRow[vitimasKey])) {
+                            pacRow[vitimasKey] = 1;
+                        }
+                        
+                        pacRow._atendimentos = 1; // Always 1 per line/patient
+                        
+                        return pacRow;
+                    });
+                    
+                    // Aggregate data at occurrence level
+                    const vitimasKey = findKey(newRow._pacientes[0], 'Vítimas') || 'Vítimas';
+                    const tipoAgravoKey = findKey(newRow._pacientes[0], 'TipoAgravo') || 'TipoAgravo';
+                    
+                    // Total vítimas = sum
+                    newRow._totalVitimas = newRow._pacientes.reduce((sum, p) => sum + (p[vitimasKey] || 0), 0);
+                    newRow._totalAtendimentos = 1; // Always 1 per occurrence
+                    
+                    // TipoAgravo priority: use first non-"-" value
+                    newRow._aggregatedTipoAgravo = newRow._pacientes.find(p => {
+                        const tipo = String(p[tipoAgravoKey] || '').trim();
+                        return tipo && tipo !== '-';
+                    })?.[tipoAgravoKey] || '-';
+                }
+                
                 const prefixKey = findKey(newRow, 'Prefixo');
-                if (prefixKey && typeof newRow[prefixKey] === 'string' && newRow[prefixKey].toUpperCase().startsWith('PENDENTE')) newRow[prefixKey] = 'PENDENTE';
+                if (prefixKey && typeof newRow[prefixKey] === 'string' && newRow[prefixKey].toUpperCase().startsWith('PENDENTE')) {
+                    newRow[prefixKey] = 'PENDENTE';
+                }
                 const reservaPrefixos = ["USB RESERVA", "USB EXTRA 1", "USB EXTRA 2", "USB EXTRA"];
-                if (prefixKey && typeof newRow[prefixKey] === 'string' && reservaPrefixos.includes(newRow[prefixKey].toUpperCase())) newRow[prefixKey] = 'USB RESERVA';
+                if (prefixKey && typeof newRow[prefixKey] === 'string' && reservaPrefixos.includes(newRow[prefixKey].toUpperCase())) {
+                    newRow[prefixKey] = 'USB RESERVA';
+                }
                 const estabKey = findKey(newRow, 'Estabelecimento');
-                if (estabKey && typeof newRow[estabKey] === 'string' && newRow[estabKey].toUpperCase().startsWith('PRIVADO')) newRow[estabKey] = 'PRIVADO';
+                if (estabKey && typeof newRow[estabKey] === 'string' && newRow[estabKey].toUpperCase().startsWith('PRIVADO')) {
+                    newRow[estabKey] = 'PRIVADO';
+                }
                 
                 const atendimentosKey = findKey(newRow, 'Atendimentos') || 'Atendimentos';
                 const vitimasKey = findKey(newRow, 'Vítimas') || 'Vítimas';
 
-                newRow[atendimentosKey] = parseInt(newRow[atendimentosKey], 10) || 0;
+                newRow[atendimentosKey] = 1; // Always 1 per occurrence
                 newRow[vitimasKey] = parseInt(newRow[vitimasKey], 10);
                 
                 if (isNaN(newRow[vitimasKey])) {
@@ -1275,12 +1373,14 @@ if (filterRecursosSamu) {
             
             filterSamuOesteGlobal = document.getElementById('filter-samu-oeste-global');
             detailOccurrenceToggle = document.getElementById('detail-occurrence-toggle');
+            detailOccurrenceToggle.checked = true; // Ativar por padrão
             detailOccurrenceToggle.addEventListener('click', handleFilterChange);
 
             // populate column selector for per-column search tags
             populateColumnSelector();
 
             updateYearToggleButton();
+            updateFilterAvailability(); // Apply filter availability based on detail mode
         };
 
         // Populate the column selector used to create per-column search tags
@@ -1337,6 +1437,11 @@ if (filterRecursosSamu) {
                 if(detailOccurrenceToggle) detailOccurrenceToggle.checked = false;
             }
 
+            // Update filter availability when detail toggle changes
+            if (target.id === 'detail-occurrence-toggle') {
+                updateFilterAvailability();
+            }
+
             sortState.key = null;
             columnOrder = [];
             updateDashboard();
@@ -1353,6 +1458,28 @@ if (filterRecursosSamu) {
 
             container.innerHTML = html;
             container.querySelectorAll('.contextual-checkbox').forEach(el => el.addEventListener('click', () => { sortState.key = null; updateDashboard(); }));
+        };
+
+        // Manage filter availability based on detail mode
+        const updateFilterAvailability = () => {
+            const detailViewEnabled = document.getElementById('detail-occurrence-toggle')?.checked;
+            const patientSpecificColumns = ['Estabelecimento', 'Idade', 'Sexo', 'TipoAgravo', 'Prefixo', 'Nome_Envolvido'];
+            
+            // Disable/enable group buttons based on detail view
+            patientSpecificColumns.forEach(col => {
+                const btn = document.querySelector(`[data-group-by="${col}"]`);
+                if (btn) {
+                    if (!detailViewEnabled) {
+                        btn.classList.add('opacity-50', 'cursor-not-allowed');
+                        btn.disabled = true;
+                        btn.title = 'Ative "Detalhar linhas da ocorrência" para usar este filtro';
+                    } else {
+                        btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                        btn.disabled = false;
+                        btn.title = '';
+                    }
+                }
+            });
         };
 
         // --- Main Dashboard Logic ---
@@ -1536,10 +1663,44 @@ if (filterRecursosSamu) {
                     
                     const nomeEnvolvidoKey = findKey(dataToGroup[0], 'Nome_Envolvido');
 
+                    // If detail view is enabled and grouping by occurrence, expand patients
+                    if (shouldDetailOcorrencia && dataToGroup[0]._pacientes) {
+                        // Flatten pacientes into separate rows for display
+                        const expandedData = [];
+                        dataToGroup.forEach(occRow => {
+                            if (occRow._pacientes && Array.isArray(occRow._pacientes)) {
+                                occRow._pacientes.forEach(pacData => {
+                                    expandedData.push({ ...occRow, ...pacData, _isPatientDetail: true });
+                                });
+                            } else {
+                                expandedData.push(occRow);
+                            }
+                        });
+                        dataToGroup = expandedData;
+                    } else if (dataToGroup[0]._pacientes && !shouldDetailOcorrencia) {
+                        // Aggregate pacientes data when detail view is disabled
+                        dataToGroup = dataToGroup.map(occRow => {
+                            if (!occRow._pacientes || !Array.isArray(occRow._pacientes)) return occRow;
+                            
+                            let aggRow = { ...occRow };
+                            const vitimasKey = findKey(occRow, 'Vítimas') || 'Vítimas';
+                            const tipoAgravoKey = findKey(occRow, 'TipoAgravo') || 'TipoAgravo';
+                            
+                            // Set aggregated values
+                            aggRow[vitimasKey] = occRow._totalVitimas || 0;
+                            aggRow[tipoAgravoKey] = occRow._aggregatedTipoAgravo || '-';
+                            
+                            // Mark as aggregated so filters can exclude detail-only columns
+                            aggRow._isAggregated = true;
+                            
+                            return aggRow;
+                        });
+                    }
+
                     dataToGroup.forEach(row => {
                         let key = selectedGroups.map(group => row[group] ?? 'N/A').join('||');
 
-                        if (shouldDetailOcorrencia) {
+                        if (shouldDetailOcorrencia && row._isPatientDetail) {
                             key += `||${row[prefixoKey] || ''}||${row[nomeEnvolvidoKey] || ''}`;
                         }
 
@@ -1729,14 +1890,17 @@ if (filterRecursosSamu) {
         downloadBtn.addEventListener('click', () => { const rows = Array.from(tableBody.querySelectorAll('tr')); if (rows.length === 0) { showMessage("Não há dados para exportar.", true); return; } const headers = Array.from(tableHead.querySelectorAll('th')).map(th => th.textContent.replace(' ▲', '').replace(' ▼', '')); const csv = [headers.join(';'), ...rows.map(r => Array.from(r.querySelectorAll('td')).map(td => `"${td.textContent}"`).join(';'))].join('\n'); const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'dados_analisados.csv'; link.click(); link.remove(); });
 
         downloadMergedDataCsvBtn.addEventListener('click', () => {
-            if (mergedData.length === 0) {
+            const dataToExport = window._flatMergedData || mergedData;
+            if (dataToExport.length === 0) {
                 showMessage("Nenhum dado mesclado para exportar.", true);
                 return;
             }
             const allKeys = new Set();
-            mergedData.forEach(row => Object.keys(row).forEach(k => allKeys.add(k)));
+            dataToExport.forEach(row => Object.keys(row).forEach(k => {
+                if (!k.startsWith('_')) allKeys.add(k); // Skip internal fields
+            }));
             const headers = Array.from(allKeys);
-            const csv = [headers.join(';'), ...mergedData.map(row => headers.map(h => {
+            const csv = [headers.join(';'), ...dataToExport.map(row => headers.map(h => {
                 const val = row[h] ?? '';
                 return `"${String(val).replace(/"/g, '""')}"`;
             }).join(';'))].join('\n');
@@ -1750,15 +1914,18 @@ if (filterRecursosSamu) {
         });
 
         downloadMergedDataExcelBtn.addEventListener('click', () => {
-            if (mergedData.length === 0) {
+            const dataToExport = window._flatMergedData || mergedData;
+            if (dataToExport.length === 0) {
                 showMessage("Nenhum dado mesclado para exportar.", true);
                 return;
             }
             const allKeys = new Set();
-            mergedData.forEach(row => Object.keys(row).forEach(k => allKeys.add(k)));
+            dataToExport.forEach(row => Object.keys(row).forEach(k => {
+                if (!k.startsWith('_')) allKeys.add(k); // Skip internal fields
+            }));
             const headers = Array.from(allKeys);
             const ws_data = [headers];
-            mergedData.forEach(row => {
+            dataToExport.forEach(row => {
                 const rowData = headers.map(h => row[h] ?? '');
                 ws_data.push(rowData);
             });
