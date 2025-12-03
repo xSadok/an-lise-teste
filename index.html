@@ -1725,7 +1725,11 @@ if (filterRecursosSamu) {
                     }
 
                     dataToGroup.forEach(row => {
-                        let key = selectedGroups.map(group => row[group] ?? 'N/A').join('||');
+                        let key = selectedGroups.map(group => {
+                            // Map the group name to actual column key using findKey
+                            const actualKey = findKey(row, group);
+                            return actualKey ? row[actualKey] : 'N/A';
+                        }).join('||');
 
                         if (shouldDetailOcorrencia && row._isPatientDetail) {
                             key += `||${row[prefixoKey] || ''}||${row[nomeEnvolvidoKey] || ''}`;
@@ -1733,10 +1737,13 @@ if (filterRecursosSamu) {
 
                         if (!grouped[key]) {
                             grouped[key] = { ...row };
-                            // Ensure all selected group columns are present for rendering
+                            // Map group names to actual column keys and ensure they're set
                             selectedGroups.forEach(group => { 
-                                if (!(group in grouped[key])) {
-                                    grouped[key][group] = row[group] ?? 'N/A';
+                                const actualKey = findKey(row, group);
+                                if (actualKey && !(actualKey in grouped[key])) {
+                                    grouped[key][actualKey] = row[actualKey] ?? 'N/A';
+                                } else if (actualKey) {
+                                    grouped[key][actualKey] = row[actualKey] ?? 'N/A';
                                 }
                             });
                             grouped[key][atendimentosKey] = 0;
