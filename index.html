@@ -1024,7 +1024,17 @@ if (filterRecursosSamu) {
             const keyNames = {
                 ocorrencia: findKey(allRawData[0], 'NumOcorrencia'),
                 paciente: findKey(allRawData[0], 'Nome_Envolvido'),
-                recurso: findKey(allRawData[0], 'Prefixo')
+                recurso: findKey(allRawData[0], 'Prefixo'),
+                hora: findKey(allRawData[0], 'HoraIni_TARM_Hora'),
+                mes: findKey(allRawData[0], 'DataIni_TARM_Mes'),
+                incidente: findKey(allRawData[0], 'Incidente'),
+                municipio: findKey(allRawData[0], 'Município'),
+                estabelecimento: findKey(allRawData[0], 'Estabelecimento'),
+                idade: findKey(allRawData[0], 'Idade'),
+                sexo: findKey(allRawData[0], 'Sexo'),
+                tipoAgravo: findKey(allRawData[0], 'TipoAgravo'),
+                atendimentos: findKey(allRawData[0], 'Atendimentos'),
+                vitimas: findKey(allRawData[0], 'Vítimas')
             };
 
             if (!keyNames.ocorrencia || !keyNames.paciente || !keyNames.recurso) {
@@ -1050,13 +1060,16 @@ if (filterRecursosSamu) {
                 
                 // Extract fixed fields from first row (same for all patients of this occurrence)
                 const occurrenceData = {
-                    [keyNames.ocorrencia]: ocorrencia,
-                    [keyNames.hora || 'HoraIni_TARM_Hora']: firstRow[keyNames.hora || 'HoraIni_TARM_Hora'],
-                    [keyNames.mes || 'DataIni_TARM_Mes']: firstRow[keyNames.mes || 'DataIni_TARM_Mes'],
-                    [keyNames.incidente || 'Incidente']: firstRow[keyNames.incidente || 'Incidente'],
-                    [keyNames.municipio || 'Município']: firstRow[keyNames.municipio || 'Município'],
-                    _pacientes: []
+                    [keyNames.ocorrencia]: ocorrencia
                 };
+                
+                // Add fixed columns if they exist
+                if (keyNames.hora) occurrenceData[keyNames.hora] = firstRow[keyNames.hora];
+                if (keyNames.mes) occurrenceData[keyNames.mes] = firstRow[keyNames.mes];
+                if (keyNames.incidente) occurrenceData[keyNames.incidente] = firstRow[keyNames.incidente];
+                if (keyNames.municipio) occurrenceData[keyNames.municipio] = firstRow[keyNames.municipio];
+                
+                occurrenceData._pacientes = [];
 
                 // Group rows by unique paciente+recurso combination
                 const pacienteMap = new Map();
@@ -1079,7 +1092,7 @@ if (filterRecursosSamu) {
 
                 // Copy all other fields from first row as fallback
                 Object.keys(firstRow).forEach(key => {
-                    if (!occurrenceData.hasOwnProperty(key)) {
+                    if (!occurrenceData.hasOwnProperty(key) && !key.startsWith('_')) {
                         occurrenceData[key] = firstRow[key];
                     }
                 });
@@ -1100,14 +1113,23 @@ if (filterRecursosSamu) {
             
             // Pré-processamento para filtro de "sem envio de recurso"
             const occurrenceCounts = new Map();
-            mergedData.forEach(row => {
-                const oc = row[keyNames.ocorrencia];
+            mergedData.forEach(occData => {
+                const oc = occData[keyNames.ocorrencia];
                 if (!oc) return;
                 if (!occurrenceCounts.has(oc)) {
                     occurrenceCounts.set(oc, { prefixes: new Set() });
                 }
                 const data = occurrenceCounts.get(oc);
-                data.prefixes.add(String(row[keyNames.recurso] || '').trim().toUpperCase());
+                // Check all pacientes in this occurrence
+                if (occData._pacientes && Array.isArray(occData._pacientes)) {
+                    occData._pacientes.forEach(pac => {
+                        const prefix = String(pac[keyNames.recurso] || '').trim().toUpperCase();
+                        data.prefixes.add(prefix);
+                    });
+                } else {
+                    const prefix = String(occData[keyNames.recurso] || '').trim().toUpperCase();
+                    data.prefixes.add(prefix);
+                }
             });
 
             occurrencesWithoutDispatch.clear();
@@ -1130,24 +1152,26 @@ if (filterRecursosSamu) {
                     newRow._pacientes = newRow._pacientes.map(pacData => {
                         let pacRow = { ...pacData };
                         
-                        const prefixKey = findKey(pacRow, 'Prefixo');
-                        if (prefixKey && typeof pacRow[prefixKey] === 'string' && pacRow[prefixKey].toUpperCase().startsWith('PENDENTE')) {
-                            pacRow[prefixKey] = 'PENDENTE';
+                        // Normalize Prefixo
+                        if (keyNames.recurso && typeof pacRow[keyNames.recurso] === 'string' && pacRow[keyNames.recurso].toUpperCase().startsWith('PENDENTE')) {
+                            pacRow[keyNames.recurso] = 'PENDENTE';
                         }
                         const reservaPrefixos = ["USB RESERVA", "USB EXTRA 1", "USB EXTRA 2", "USB EXTRA"];
-                        if (prefixKey && typeof pacRow[prefixKey] === 'string' && reservaPrefixos.includes(pacRow[prefixKey].toUpperCase())) {
-                            pacRow[prefixKey] = 'USB RESERVA';
+                        if (keyNames.recurso && typeof pacRow[keyNames.recurso] === 'string' && reservaPrefixos.includes(pacRow[keyNames.recurso].toUpperCase())) {
+                            pacRow[keyNames.recurso] = 'USB RESERVA';
                         }
                         
-                        const estabKey = findKey(pacRow, 'Estabelecimento');
-                        if (estabKey && typeof pacRow[estabKey] === 'string' && pacRow[estabKey].toUpperCase().startsWith('PRIVADO')) {
-                            pacRow[estabKey] = 'PRIVADO';
+                        // Normalize Estabelecimento
+                        if (keyNames.estabelecimento && typeof pacRow[keyNames.estabelecimento] === 'string' && pacRow[keyNames.estabelecimento].toUpperCase().startsWith('PRIVADO')) {
+                            pacRow[keyNames.estabelecimento] = 'PRIVADO';
                         }
                         
-                        const vitimasKey = findKey(pacRow, 'Vítimas') || 'Vítimas';
-                        pacRow[vitimasKey] = parseInt(pacRow[vitimasKey], 10);
-                        if (isNaN(pacRow[vitimasKey])) {
-                            pacRow[vitimasKey] = 1;
+                        // Parse Vítimas
+                        if (keyNames.vitimas) {
+                            pacRow[keyNames.vitimas] = parseInt(pacRow[keyNames.vitimas], 10);
+                            if (isNaN(pacRow[keyNames.vitimas])) {
+                                pacRow[keyNames.vitimas] = 1;
+                            }
                         }
                         
                         pacRow._atendimentos = 1; // Always 1 per line/patient
@@ -1156,8 +1180,8 @@ if (filterRecursosSamu) {
                     });
                     
                     // Aggregate data at occurrence level
-                    const vitimasKey = findKey(newRow._pacientes[0], 'Vítimas') || 'Vítimas';
-                    const tipoAgravoKey = findKey(newRow._pacientes[0], 'TipoAgravo') || 'TipoAgravo';
+                    const vitimasKey = keyNames.vitimas || 'Vítimas';
+                    const tipoAgravoKey = keyNames.tipoAgravo || 'TipoAgravo';
                     
                     // Total vítimas = sum
                     newRow._totalVitimas = newRow._pacientes.reduce((sum, p) => sum + (p[vitimasKey] || 0), 0);
@@ -1170,27 +1194,30 @@ if (filterRecursosSamu) {
                     })?.[tipoAgravoKey] || '-';
                 }
                 
-                const prefixKey = findKey(newRow, 'Prefixo');
-                if (prefixKey && typeof newRow[prefixKey] === 'string' && newRow[prefixKey].toUpperCase().startsWith('PENDENTE')) {
-                    newRow[prefixKey] = 'PENDENTE';
+                // Also normalize at occurrence level for fallback
+                if (keyNames.recurso && typeof newRow[keyNames.recurso] === 'string' && newRow[keyNames.recurso].toUpperCase().startsWith('PENDENTE')) {
+                    newRow[keyNames.recurso] = 'PENDENTE';
                 }
                 const reservaPrefixos = ["USB RESERVA", "USB EXTRA 1", "USB EXTRA 2", "USB EXTRA"];
-                if (prefixKey && typeof newRow[prefixKey] === 'string' && reservaPrefixos.includes(newRow[prefixKey].toUpperCase())) {
-                    newRow[prefixKey] = 'USB RESERVA';
-                }
-                const estabKey = findKey(newRow, 'Estabelecimento');
-                if (estabKey && typeof newRow[estabKey] === 'string' && newRow[estabKey].toUpperCase().startsWith('PRIVADO')) {
-                    newRow[estabKey] = 'PRIVADO';
+                if (keyNames.recurso && typeof newRow[keyNames.recurso] === 'string' && reservaPrefixos.includes(newRow[keyNames.recurso].toUpperCase())) {
+                    newRow[keyNames.recurso] = 'USB RESERVA';
                 }
                 
-                const atendimentosKey = findKey(newRow, 'Atendimentos') || 'Atendimentos';
-                const vitimasKey = findKey(newRow, 'Vítimas') || 'Vítimas';
-
-                newRow[atendimentosKey] = 1; // Always 1 per occurrence
-                newRow[vitimasKey] = parseInt(newRow[vitimasKey], 10);
+                if (keyNames.estabelecimento && typeof newRow[keyNames.estabelecimento] === 'string' && newRow[keyNames.estabelecimento].toUpperCase().startsWith('PRIVADO')) {
+                    newRow[keyNames.estabelecimento] = 'PRIVADO';
+                }
                 
-                if (isNaN(newRow[vitimasKey])) {
-                    newRow[vitimasKey] = 1;
+                // Always use 1 for atendimentos
+                if (keyNames.atendimentos) {
+                    newRow[keyNames.atendimentos] = 1;
+                }
+                
+                // Parse Vítimas at occurrence level
+                if (keyNames.vitimas) {
+                    newRow[keyNames.vitimas] = newRow._totalVitimas !== undefined ? newRow._totalVitimas : parseInt(newRow[keyNames.vitimas], 10);
+                    if (isNaN(newRow[keyNames.vitimas])) {
+                        newRow[keyNames.vitimas] = 1;
+                    }
                 }
 
                 return newRow;
