@@ -89,6 +89,65 @@
             font-size: 0.8rem;
         }
 
+        /* Tooltip Styles */
+        .tooltip-container {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .tooltip-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            background-color: #d1d5db;
+            color: white;
+            border-radius: 50%;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: help;
+            transition: background-color 0.2s;
+        }
+        .tooltip-icon:hover {
+            background-color: #6b7280;
+        }
+        .tooltip-text {
+            visibility: hidden;
+            width: 250px;
+            background-color: #374151;
+            color: #f3f4f6;
+            text-align: left;
+            border-radius: 0.375rem;
+            padding: 0.75rem;
+            position: absolute;
+            z-index: 1000;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -125px;
+            opacity: 0;
+            transition: opacity 0.2s;
+            font-size: 0.75rem;
+            line-height: 1.4;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            pointer-events: none;
+        }
+        .tooltip-text::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #374151 transparent transparent transparent;
+        }
+        .tooltip-container:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+
         /* Custom Checkbox */
         .custom-checkbox-label {
             display: flex;
@@ -236,22 +295,38 @@
                             <label class="custom-checkbox-label">
                                 <input type="checkbox" id="setting-unique-atendimentos" checked class="custom-checkbox-input">
                                 <span class="custom-checkbox-display"></span>
-                                <span class="text-sm">Atendimentos (ocorrências exclusivas)</span>
+                                <span class="text-sm tooltip-container">
+                                    Atendimentos (ocorrências exclusivas)
+                                    <span class="tooltip-icon">?</span>
+                                    <span class="tooltip-text">Ao ativar, conta cada ocorrência única uma vez (não soma valores repetidos). Ao desativar, soma todos os valores de atendimentos das linhas.</span>
+                                </span>
                             </label>
                             <label class="custom-checkbox-label">
                                 <input type="checkbox" id="filter-samu-oeste-global" checked class="custom-checkbox-input">
                                 <span class="custom-checkbox-display"></span>
-                                <span class="text-sm">Filtrar por SAMU OESTE</span>
+                                <span class="text-sm tooltip-container">
+                                    Filtrar por SAMU OESTE
+                                    <span class="tooltip-icon">?</span>
+                                    <span class="tooltip-text">Filtra dados para mostrar apenas eventos dos 44 municípios que fazem parte da SAMU OESTE.</span>
+                                </span>
                             </label>
                             <label class="custom-checkbox-label">
                                 <input type="checkbox" id="filter-dispatched-only" class="custom-checkbox-input">
                                 <span class="custom-checkbox-display"></span>
-                                <span class="text-sm">Mostrar apenas com envio de recurso</span>
+                                <span class="text-sm tooltip-container">
+                                    Mostrar apenas com envio de recurso
+                                    <span class="tooltip-icon">?</span>
+                                    <span class="tooltip-text">Remove ocorrências que tiveram apenas "SEM ENCAMINHAMENTO", mostrando apenas eventos com envio efetivo de recursos.</span>
+                                </span>
                             </label>
                             <label class="custom-checkbox-label">
                                 <input type="checkbox" id="filter-recursos-samu" class="custom-checkbox-input">
                                 <span class="custom-checkbox-display"></span>
-                                <span class="text-sm">Recursos SAMU</span>
+                                <span class="text-sm tooltip-container">
+                                    Recursos SAMU
+                                    <span class="tooltip-icon">?</span>
+                                    <span class="tooltip-text">Mostra apenas recursos do SAMU: USB, USA, AÉREO e MOTO. Útil para análise específica de recursos SAMU.</span>
+                                </span>
                             </label>
                         </div>
                     </div>
@@ -326,7 +401,11 @@
                             <label class="custom-checkbox-label">
                                 <input type="checkbox" id="detail-occurrence-toggle" class="custom-checkbox-input">
                                 <span class="custom-checkbox-display"></span>
-                                <span class="text-sm">Detalhar linhas da ocorrência</span>
+                                <span class="text-sm tooltip-container">
+                                    Detalhar linhas da ocorrência
+                                    <span class="tooltip-icon">?</span>
+                                    <span class="tooltip-text">Ao agrupar por ocorrência, expande cada linha para mostrar detalhes por prefixo e paciente. Sem ativação, agrupa tudo em uma linha por ocorrência.</span>
+                                </span>
                             </label>
                         </div>
                         <!-- removido: controles de atendimentos/vitimas e totais, agora no topo -->
