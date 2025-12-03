@@ -1733,7 +1733,8 @@ if (filterRecursosSamu) {
 
                         if (!grouped[key]) {
                             grouped[key] = { ...row };
-                            selectedGroups.forEach(group => { grouped[key][group] = row[group] ?? 'N/A'; });
+                            // Preserve actual values from row, only use 'N/A' in key for grouping
+                            // Don't explicitly set to 'N/A' - let the actual values stay
                             grouped[key][atendimentosKey] = 0;
                             grouped[key][vitimasKey] = 0;
                             if (ocorrenciaKey) grouped[key]._ocorrencias = new Set();
